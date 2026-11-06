@@ -1,0 +1,8 @@
+{
+  "conn_type": "postgres",
+  "host": "warehouse.internal",
+  "port": 5432,
+  "schema": "analytics",
+  "login": "etl",
+  "extra": "{\"sslmode\": \"require\"}"
+}

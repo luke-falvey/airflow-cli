@@ -1,0 +1,4 @@
+{
+  "cli_demo_env": "staging",
+  "cli_demo_settings": {"batch_size": 500, "regions": ["eu", "us"]}
+}
