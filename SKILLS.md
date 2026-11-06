@@ -9,6 +9,17 @@ description: Drive Apache Airflow 2.11 from the shell with the `airflow-cli` too
 It talks to the webserver over HTTP, so it works from any machine that can reach the Airflow UI.
 It doesn't replace Airflow's own `airflow` command, which needs a local Airflow install.
 
+This file is the general reference. Task-focused skills, each with a worked example, are in
+[`skills/`](skills/):
+
+| Skill | Use it to |
+|---|---|
+| [`airflow-run-dag`](skills/airflow-run-dag/SKILL.md) | trigger a run with conf, wait, read the result, clean up |
+| [`airflow-debug-failed-run`](skills/airflow-debug-failed-run/SKILL.md) | find why a run failed, fix it, re-run only what failed |
+| [`airflow-backfill`](skills/airflow-backfill/SKILL.md) | one run per date over a range, with retry and a summary ([script](skills/airflow-backfill/backfill.sh)) |
+| [`airflow-promote-config`](skills/airflow-promote-config/SKILL.md) | diff and copy variables, pools and connections between environments |
+| [`airflow-triage`](skills/airflow-triage/SKILL.md) | read-only health report: parse errors, stuck runs, pools ([script](skills/airflow-triage/triage.sh)) |
+
 ## 1. Configure profiles
 
 Connection details live in `~/.airflow.toml`. Run `airflow-cli config example` to print a template:

@@ -39,6 +39,25 @@ airflow-cli runs trigger my_dag --conf '{"date": "2026-11-01"}' --wait
   - XComs, variables (with import/export), connections, pools, import errors, health, version, server config.
   - Everything else in the API through `airflow-cli api METHOD PATH`.
 
+## Claude skills
+
+[`skills/`](skills/) has task-focused skills, each with a worked example that was run against a real
+Airflow 2.11 server:
+- **`airflow-run-dag`:** trigger, wait, read the result, clean up.
+- **`airflow-debug-failed-run`:** read the failing task's log, fix the cause, re-run only what failed.
+- **`airflow-backfill`:** one run per date over a range, retry once, summary. Includes a script.
+- **`airflow-promote-config`:** diff and copy variables, pools and connections between profiles.
+- **`airflow-triage`:** read-only health report. Includes a script that exits 1 when something is wrong.
+
+To make them available to Claude Code in every project, copy them into your personal skills folder.
+For one project only, use that project's `.claude/skills/` instead.
+
+```bash
+mkdir -p ~/.claude/skills && cp -r skills/* ~/.claude/skills/
+```
+
+They're also included in each release archive.
+
 ## Development
 
 CI (`.github/workflows/ci.yml`) runs on every push and pull request:

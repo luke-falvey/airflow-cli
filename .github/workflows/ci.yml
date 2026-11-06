@@ -91,7 +91,7 @@ jobs:
           name=airflow-cli-${{ matrix.target }}
           mkdir "$name"
           cp target/${{ matrix.target }}/release/airflow-cli README.md SKILLS.md "$name/"
-          cp -r examples "$name/"
+          cp -r examples skills "$name/"
           tar czf "$name.tar.gz" "$name"
           echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
 
@@ -102,7 +102,7 @@ jobs:
           $name = "airflow-cli-${{ matrix.target }}"
           New-Item -ItemType Directory $name | Out-Null
           Copy-Item target/${{ matrix.target }}/release/airflow-cli.exe, README.md, SKILLS.md $name
-          Copy-Item -Recurse examples $name
+          Copy-Item -Recurse examples, skills $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
           "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
