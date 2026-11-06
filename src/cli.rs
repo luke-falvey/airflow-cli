@@ -339,9 +339,11 @@ pub enum TasksCmd {
         /// Also clear upstream tasks.
         #[arg(long)]
         upstream: bool,
-        /// Also reset the DAG run's state.
+        /// Leave the DAG run's state alone. By default the run is set back to
+        /// queued so the scheduler picks the cleared tasks up; without that, cleared
+        /// tasks in a failed run never re-run.
         #[arg(long)]
-        reset_dag_run: bool,
+        no_reset_dag_run: bool,
         /// Only show what would be cleared.
         #[arg(long)]
         dry_run: bool,

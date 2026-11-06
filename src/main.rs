@@ -560,7 +560,7 @@ fn tasks(client: &Client, out: Output, cmd: TasksCmd) -> Result<i32> {
             only_failed,
             downstream,
             upstream,
-            reset_dag_run,
+            no_reset_dag_run,
             dry_run,
         } => {
             // Airflow's dry_run defaults to true for this endpoint, so always send it.
@@ -570,7 +570,7 @@ fn tasks(client: &Client, out: Output, cmd: TasksCmd) -> Result<i32> {
                 "only_failed": only_failed,
                 "include_downstream": downstream,
                 "include_upstream": upstream,
-                "reset_dag_runs": reset_dag_run,
+                "reset_dag_runs": !no_reset_dag_run,
             });
             if !tasks.is_empty() {
                 body["task_ids"] = json!(tasks);
@@ -716,8 +716,11 @@ fn set_variable(
             // A PATCH without update_mask replaces every field, so carry the
             // existing description over when none is given. (Airflow 2.11
             // rejects update_mask=value.)
-            if body.get("description").is_none() {
-                body["description"] = existing.get("description").cloned().unwrap_or(Value::Null);
+            // Airflow rejects "description": null, so only send a real one.
+            if body.get("description").is_none()
+                && let Some(d) = existing.get("description").filter(|d| d.is_string())
+            {
+                body["description"] = d.clone();
             }
             client.json(Method::PATCH, &["variables", key], &vec![], Some(&body))
         }

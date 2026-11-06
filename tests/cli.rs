@@ -293,7 +293,8 @@ fn clear_tasks_always_sends_dry_run() {
     let m = server
         .mock("POST", "/api/v1/dags/etl/clearTaskInstances")
         .match_body(Matcher::PartialJson(json!({
-            "dag_run_id": "r1", "dry_run": false, "only_failed": true, "task_ids": ["a", "b"]
+            "dag_run_id": "r1", "dry_run": false, "only_failed": true, "task_ids": ["a", "b"],
+            "reset_dag_runs": true
         })))
         .with_body(r#"{"task_instances":[]}"#)
         .create();
@@ -573,4 +574,24 @@ fn config_shows_read_only() {
         .stdout(predicate::str::contains(
             r#""name":"dev","read_only":false"#,
         ));
+}
+
+#[test]
+fn variable_update_omits_null_description() {
+    let mut server = Server::new();
+    server
+        .mock("GET", "/api/v1/variables/k")
+        .with_body(r#"{"key":"k","value":"old","description":null}"#)
+        .create();
+    let patch = server
+        .mock("PATCH", "/api/v1/variables/k")
+        .match_body(Matcher::Json(json!({"key": "k", "value": "new"})))
+        .with_body(r#"{"key":"k","value":"new"}"#)
+        .create();
+    Env::for_server(&server)
+        .cmd()
+        .args(["variables", "set", "k", "new"])
+        .assert()
+        .success();
+    patch.assert();
 }
