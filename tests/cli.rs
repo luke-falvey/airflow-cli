@@ -450,3 +450,127 @@ fn config_show_hides_secrets() {
         ))
         .stdout(predicate::str::contains("hunter2").not());
 }
+
+fn read_only_env(server: &Server) -> Env {
+    Env::new(&format!(
+        "username = \"admin\"\npassword = \"secret\"\nread_only = true\n\
+         [profiles.prod]\nbase_url = \"{url}\"\n\
+         [profiles.dev]\nbase_url = \"{url}\"\nread_only = false\n",
+        url = server.url()
+    ))
+}
+
+#[test]
+fn read_only_profile_refuses_writes_before_sending() {
+    let mut server = Server::new();
+    server
+        .mock("GET", "/api/v1/dags/etl")
+        .with_body(r#"{"dag_id":"etl","is_paused":false}"#)
+        .create();
+    let post = server
+        .mock("POST", "/api/v1/dags/etl/dagRuns")
+        .expect(0)
+        .create();
+    let env = read_only_env(&server);
+    env.cmd()
+        .args(["-p", "prod", "runs", "trigger", "etl"])
+        .assert()
+        .code(5)
+        .stderr(predicate::str::contains(
+            "profile 'prod' is read-only: refusing POST /api/v1/dags/etl/dagRuns",
+        ));
+    post.assert();
+}
+
+#[test]
+fn read_only_blocks_every_kind_of_write() {
+    let mut server = Server::new();
+    let writes: Vec<_> = ["POST", "PATCH", "PUT", "DELETE"]
+        .into_iter()
+        .map(|m| server.mock(m, Matcher::Any).expect(0).create())
+        .collect();
+    let env = read_only_env(&server);
+    for args in [
+        vec!["dags", "pause", "etl"],
+        vec!["variables", "delete", "k"],
+        vec!["pools", "delete", "p"],
+        vec!["runs", "delete", "etl", "r1"],
+        vec!["tasks", "clear", "etl", "r1"],
+        vec!["api", "DELETE", "/users/bob"],
+    ] {
+        env.cmd().args(["-p", "prod"]).args(&args).assert().code(5);
+    }
+    for m in writes {
+        m.assert();
+    }
+}
+
+#[test]
+fn read_only_allows_reads_and_dry_runs() {
+    let mut server = Server::new();
+    server
+        .mock("GET", "/api/v1/dags")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"dags":[],"total_entries":0}"#)
+        .create();
+    let dry = server
+        .mock("POST", "/api/v1/dags/etl/clearTaskInstances")
+        .match_body(Matcher::PartialJson(json!({"dry_run": true})))
+        .with_body(r#"{"task_instances":[]}"#)
+        .create();
+    let env = read_only_env(&server);
+    env.cmd()
+        .args(["-p", "prod", "dags", "list"])
+        .assert()
+        .success();
+    env.cmd()
+        .args(["-p", "prod", "tasks", "clear", "etl", "r1", "--dry-run"])
+        .assert()
+        .success();
+    dry.assert();
+}
+
+#[test]
+fn profile_can_opt_out_and_flag_forces_read_only() {
+    let mut server = Server::new();
+    let del = server
+        .mock("DELETE", "/api/v1/variables/k")
+        .with_status(204)
+        .expect(1)
+        .create();
+    let env = read_only_env(&server);
+    // dev sets read_only = false, overriding the top-level default.
+    env.cmd()
+        .args(["-p", "dev", "variables", "delete", "k"])
+        .assert()
+        .success();
+    // --read-only (or AIRFLOW_CLI_READ_ONLY) turns it back on.
+    env.cmd()
+        .args(["-p", "dev", "--read-only", "variables", "delete", "k"])
+        .assert()
+        .code(5);
+    env.cmd()
+        .env("AIRFLOW_CLI_READ_ONLY", "true")
+        .args(["-p", "dev", "variables", "delete", "k"])
+        .assert()
+        .code(5);
+    del.assert();
+}
+
+#[test]
+fn config_shows_read_only() {
+    let server = Server::new();
+    let env = read_only_env(&server);
+    env.cmd()
+        .args(["-p", "prod", "config", "show", "--compact"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"read_only\":true"));
+    env.cmd()
+        .args(["config", "profiles", "--compact"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""name":"dev","read_only":false"#,
+        ));
+}

@@ -21,6 +21,9 @@ default_profile = "local"
 username = "admin"
 password = "admin"
 
+# Refuse anything that changes server state. Default for every profile.
+read_only = false
+
 [profiles.local]
 base_url = "http://localhost:8080"
 
@@ -31,6 +34,7 @@ base_url = "https://airflow.staging.example.com"
 base_url = "https://airflow.example.com"
 username = "svc-airflow"         # overrides the top-level username/password
 password = "change-me"
+read_only = true                 # look but don't touch: overrides the top-level read_only
 
 [profiles.managed]
 base_url = "https://airflow.managed.example.com"
@@ -45,6 +49,31 @@ How the settings are chosen:
 | base URL | `--url`/`$AIRFLOW_CLI_URL`, then the profile's `base_url` (`/api/v1` is added for you) |
 | credentials | `--username`/`--password`/`--token` (or `$AIRFLOW_CLI_USERNAME`, `$AIRFLOW_CLI_PASSWORD`, `$AIRFLOW_CLI_TOKEN`), then the profile, then the top-level `username`/`password` |
 
+### Read-only profiles
+
+With `read_only = true`, the CLI refuses any request that would change server state. It fails before
+sending anything and exits with code 5:
+
+```
+$ airflow-cli -p prod runs trigger etl
+error: profile 'prod' is read-only: refusing POST /api/v1/dags/etl/dagRuns because it would change server state
+```
+
+- **Where it's set:** at the top level as the default, or per profile, where the profile's value wins.
+- **Forcing it on:** `--read-only` or `AIRFLOW_CLI_READ_ONLY=true` force it on for one command or shell. That's useful
+  when handing the CLI to an automated agent. Nothing on the command line can turn it off; only the config file can.
+- **Still allowed:**
+  - every GET (listing, logs, XComs, variables, DAG source and so on)
+  - the batch list endpoints, which use POST but only read
+  - `connections test`
+  - dry runs: `tasks clear --dry-run`, `runs clear --dry-run` and `tasks set-state --dry-run`
+- **Refused:** everything else, including the `api` passthrough. That covers triggering, pausing and
+  unpausing, clearing, setting states, notes, deletes, re-parsing, and creating or changing variables,
+  connections and pools.
+
+This is a client-side guard against mistakes. For real access control, give the profile an Airflow
+user with the `Viewer` role as well.
+
 A profile with a `token` sends `Authorization: Bearer ...`. Otherwise the CLI uses HTTP basic auth,
 which needs `airflow.api.auth.backend.basic_auth` in the server's `[api] auth_backends`.
 
@@ -52,7 +81,7 @@ Check the setup:
 
 ```bash
 airflow-cli config profiles     # list profiles (which one is default)
-airflow-cli config show         # resolved URL and auth for this invocation (secrets hidden)
+airflow-cli config show         # resolved URL, auth and read_only for this invocation (secrets hidden)
 airflow-cli ping                # reachable + credentials accepted
 airflow-cli -p prod ping        # same, against another profile
 airflow-cli health              # scheduler / metadatabase / triggerer health
@@ -77,6 +106,7 @@ airflow-cli health              # scheduler / metadatabase / triggerer health
   | 2 | invalid command-line usage |
   | 3 | the DAG run failed (`runs wait`, `runs trigger --wait`) |
   | 4 | `wait` timed out |
+  | 5 | refused because the profile is read-only |
 
 - Quote run ids. Airflow's generated ids look like `manual__2026-11-06T09:23:41.773322+00:00`, and the CLI encodes them for you.
 
@@ -308,6 +338,7 @@ airflow-cli runs list cli_demo --all --compact | jq -r '.dag_runs[] | select(.da
 |---|---|
 | `HTTP 401 Unauthorized` | Wrong credentials, or the server doesn't accept basic auth. Add `airflow.api.auth.backend.basic_auth` to `[api] auth_backends`, or use a `token` profile. |
 | `HTTP 403 Forbidden` | The user's role lacks that permission. For example, `Viewer` can't change variables. |
+| `... is read-only: refusing ...` (exit 5) | The profile has `read_only = true`, or `--read-only`/`AIRFLOW_CLI_READ_ONLY` is set. Switch profile, or change `read_only` in `~/.airflow.toml`. |
 | Run stays `queued` | The DAG is paused (`trigger` warns about this; use `--unpause`), or the scheduler is down (check `airflow-cli health`). |
 | `HTTP 404 DAG not found` right after adding a file | The file isn't parsed yet. Wait for the scheduler, check `import-errors list`, or use `dags reparse` for an existing DAG. |
 | `server-config` gives `HTTP 403` | The server needs `[webserver] expose_config = True`. |

@@ -15,6 +15,53 @@ pub struct Client {
     http: Http,
     api: reqwest::Url,
     auth: Auth,
+    /// Set when the profile is read-only; holds a label for error messages.
+    read_only: Option<String>,
+}
+
+/// A request refused because the profile is read-only. Exits with code 5.
+#[derive(Debug)]
+pub struct ReadOnlyError {
+    pub mode: String,
+    pub method: Method,
+    pub path: String,
+}
+
+impl std::fmt::Display for ReadOnlyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: refusing {} {} because it would change server state\n\
+             hint: read-only comes from `read_only` in ~/.airflow.toml (top level or the profile), --read-only, or AIRFLOW_CLI_READ_ONLY",
+            self.mode, self.method, self.path
+        )
+    }
+}
+
+impl std::error::Error for ReadOnlyError {}
+
+/// Whether a request leaves server state unchanged. GETs always do; a few
+/// POST/PATCH endpoints only read, or only preview when `dry_run` is true.
+/// `segments` is the path below `/api/v1`.
+pub fn is_read_only_request(method: &Method, segments: &[&str], body: Option<&Value>) -> bool {
+    if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        return true;
+    }
+    let dry_run = body.and_then(|b| b.get("dry_run")).and_then(Value::as_bool) == Some(true);
+    match (method.as_str(), segments) {
+        // Batch list endpoints use POST but only read.
+        ("POST", ["dags", "~", "dagRuns", "list"]) => true,
+        ("POST", ["dags", "~", "dagRuns", "~", "taskInstances", "list"]) => true,
+        // Tests connection settings without saving them.
+        ("POST", ["connections", "test"]) => true,
+        // Previews: these endpoints change nothing when dry_run is true.
+        ("POST", ["dags", _, "clearTaskInstances"])
+        | ("POST", ["dags", _, "updateTaskInstancesState"])
+        | ("POST", ["dags", _, "dagRuns", _, "clear"])
+        | ("PATCH", ["dags", _, "dagRuns", _, "taskInstances", _])
+        | ("PATCH", ["dags", _, "dagRuns", _, "taskInstances", _, _]) => dry_run,
+        _ => false,
+    }
 }
 
 /// An error response from the server. Airflow returns RFC 7807 problem JSON:
@@ -68,10 +115,15 @@ impl Client {
             .context("could not build HTTP client")?;
         let api = reqwest::Url::parse(&api_root(&conf.base_url))
             .with_context(|| format!("invalid base_url '{}'", conf.base_url))?;
+        let read_only = conf.read_only.then(|| match &conf.profile {
+            Some(p) => format!("profile '{p}' is read-only"),
+            None => "read-only mode is on".to_string(),
+        });
         Ok(Client {
             http,
             api,
             auth: conf.auth.clone(),
+            read_only,
         })
     }
 
@@ -103,6 +155,21 @@ impl Client {
         body: Option<&Value>,
         accept: &str,
     ) -> Result<Response> {
+        if let Some(mode) = &self.read_only {
+            let rel = url
+                .path()
+                .strip_prefix(self.api.path().trim_end_matches('/'))
+                .unwrap_or(url.path());
+            let segments: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+            if !is_read_only_request(&method, &segments, body) {
+                return Err(ReadOnlyError {
+                    mode: mode.clone(),
+                    method,
+                    path: url.path().to_string(),
+                }
+                .into());
+            }
+        }
         let mut req = self
             .request(method.clone(), url.clone())
             .header("Accept", accept);
@@ -251,4 +318,57 @@ fn check_segments(segments: &[&str]) -> Result<()> {
 pub fn is_not_found(e: &anyhow::Error) -> bool {
     e.downcast_ref::<ApiError>()
         .is_some_and(|a| a.http_status == 404)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ok(m: Method, path: &str, body: Option<Value>) -> bool {
+        let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        is_read_only_request(&m, &segs, body.as_ref())
+    }
+
+    #[test]
+    fn classifies_requests() {
+        assert!(ok(Method::GET, "/dags", None));
+        assert!(ok(Method::POST, "/dags/~/dagRuns/list", Some(json!({}))));
+        assert!(ok(Method::POST, "/connections/test", Some(json!({}))));
+        assert!(ok(
+            Method::POST,
+            "/dags/d/clearTaskInstances",
+            Some(json!({"dry_run": true}))
+        ));
+        assert!(ok(
+            Method::POST,
+            "/dags/d/dagRuns/r/clear",
+            Some(json!({"dry_run": true}))
+        ));
+        assert!(ok(
+            Method::PATCH,
+            "/dags/d/dagRuns/r/taskInstances/t",
+            Some(json!({"dry_run": true}))
+        ));
+
+        assert!(!ok(
+            Method::POST,
+            "/dags/d/clearTaskInstances",
+            Some(json!({"dry_run": false}))
+        ));
+        assert!(!ok(Method::POST, "/dags/d/clearTaskInstances", None));
+        assert!(!ok(
+            Method::POST,
+            "/dags/d/dagRuns",
+            Some(json!({"dry_run": true}))
+        ));
+        assert!(!ok(
+            Method::POST,
+            "/variables",
+            Some(json!({"dry_run": true}))
+        ));
+        assert!(!ok(Method::PATCH, "/dags/d", None));
+        assert!(!ok(Method::DELETE, "/dags/d/dagRuns/r", None));
+        assert!(!ok(Method::PUT, "/parseDagFile/x", None));
+    }
 }

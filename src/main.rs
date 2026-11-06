@@ -13,7 +13,7 @@ use reqwest::Method;
 use serde_json::{Map, Value, json};
 
 use cli::*;
-use client::{Client, Page, Query, is_not_found};
+use client::{Client, Page, Query, ReadOnlyError, is_not_found};
 use config::Auth;
 use output::Output;
 
@@ -26,6 +26,10 @@ default_profile = "local"
 username = "admin"
 password = "admin"
 
+# Set read_only = true to refuse anything that changes server state (triggering
+# runs, pausing DAGs, editing variables...). A profile's own read_only wins.
+# read_only = false
+
 [profiles.local]
 base_url = "http://localhost:8080"
 
@@ -36,6 +40,7 @@ base_url = "https://airflow.staging.example.com"
 base_url = "https://airflow.example.com"
 username = "svc-airflow"
 password = "change-me"
+read_only = true
 
 # Deployments behind a token-based gateway can use a bearer token instead.
 # [profiles.managed]
@@ -49,7 +54,11 @@ fn main() {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e:#}");
-            1
+            if e.downcast_ref::<ReadOnlyError>().is_some() {
+                5
+            } else {
+                1
+            }
         }
     };
     std::process::exit(code);
@@ -70,6 +79,7 @@ fn run(cli: Cli) -> Result<i32> {
         username: cli.username.clone(),
         password: cli.password.clone(),
         token: cli.token.clone(),
+        read_only: cli.read_only,
     };
 
     if let Command::Config(cmd) = &cli.command {
@@ -87,6 +97,7 @@ fn run(cli: Cli) -> Result<i32> {
                             "base_url": p.base_url,
                             "auth": if p.token.is_some() { "token" } else { "basic" },
                             "username": p.username.clone().or_else(|| file.username.clone()),
+                            "read_only": p.read_only.or(file.read_only).unwrap_or(false),
                             "default": Some(name) == default.as_ref(),
                         })
                     })
@@ -107,6 +118,7 @@ fn run(cli: Cli) -> Result<i32> {
                     "api_root": config::api_root(&r.base_url),
                     "auth": auth,
                     "username": username,
+                    "read_only": r.read_only,
                 }));
             }
         }

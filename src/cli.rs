@@ -13,7 +13,8 @@ use crate::client::Page;
     about = "Command-line client for the Apache Airflow 2.11 stable REST API",
     after_help = "Connection settings come from ~/.airflow.toml (see `airflow-cli config example`).\n\
                   JSON arguments accept inline JSON, @file, or - for stdin.\n\n\
-                  Exit codes: 0 success, 1 error, 2 usage error, 3 a DAG run or task failed, 4 wait timed out."
+                  Exit codes: 0 success, 1 error, 2 usage error, 3 a DAG run or task failed, 4 wait timed out,\n\
+                  5 refused because the profile is read-only."
 )]
 pub struct Cli {
     /// Profile from the config file to use.
@@ -44,6 +45,10 @@ pub struct Cli {
     /// Bearer token, overriding the config file.
     #[arg(long, global = true, env = "AIRFLOW_CLI_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
+
+    /// Refuse requests that change server state, whatever the config says.
+    #[arg(long, global = true, env = "AIRFLOW_CLI_READ_ONLY")]
+    pub read_only: bool,
 
     /// Print JSON on a single line.
     #[arg(long, global = true)]

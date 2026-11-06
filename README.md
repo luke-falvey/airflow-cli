@@ -31,7 +31,7 @@ airflow-cli runs trigger my_dag --conf '{"date": "2026-11-01"}' --wait
 ```
 
 - **Usage guide and worked examples:** [SKILLS.md](SKILLS.md). It has YAML front matter, so it can be dropped into a skills directory as-is.
-- **Configuration:** `~/.airflow.toml` holds named profiles (each with `base_url` plus `username`/`password` or `token`) and top-level default credentials. Pick a profile with `-p NAME` or `AIRFLOW_CLI_PROFILE`.
+- **Configuration:** `~/.airflow.toml` holds named profiles (each with `base_url` plus `username`/`password` or `token`) and top-level default credentials. Pick a profile with `-p NAME` or `AIRFLOW_CLI_PROFILE`. Set `read_only = true`, at the top level or per profile, to refuse anything that changes server state.
 - **Command coverage:**
   - DAGs: list, get, details, pause, unpause, delete, source, tasks, reparse, stats, warnings.
   - DAG runs: list, get, trigger, wait, clear, set state, note, delete.

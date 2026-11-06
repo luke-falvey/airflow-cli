@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 /// [profiles.managed]
 /// base_url = "https://managed.example.com"
 /// token = "eyJ..."           # bearer token instead of username/password
+/// read_only = true           # refuse anything that changes server state
 /// ```
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +32,8 @@ pub struct FileConfig {
     pub default_profile: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    /// Default for profiles that don't set `read_only` themselves.
+    pub read_only: Option<bool>,
     #[serde(default)]
     pub profiles: BTreeMap<String, Profile>,
 }
@@ -43,6 +46,8 @@ pub struct Profile {
     pub password: Option<String>,
     /// Bearer token. When set, it is sent instead of username/password.
     pub token: Option<String>,
+    /// Refuse requests that change server state. Overrides the top-level value.
+    pub read_only: Option<bool>,
 }
 
 /// Values given on the command line or through environment variables.
@@ -53,6 +58,9 @@ pub struct Overrides {
     pub username: Option<String>,
     pub password: Option<String>,
     pub token: Option<String>,
+    /// `--read-only`: forces read-only on. There is deliberately no flag to
+    /// turn it off; that has to be done in the config file.
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +76,7 @@ pub struct Resolved {
     pub profile: Option<String>,
     pub base_url: String,
     pub auth: Auth,
+    pub read_only: bool,
 }
 
 pub fn default_path() -> Result<PathBuf> {
@@ -164,10 +173,17 @@ impl FileConfig {
             (None, None) => Auth::None,
         };
 
+        let read_only = ov.read_only
+            || profile
+                .and_then(|p| p.read_only)
+                .or(self.read_only)
+                .unwrap_or(false);
+
         Ok(Resolved {
             profile: name,
             base_url,
             auth,
+            read_only,
         })
     }
 }
@@ -293,6 +309,37 @@ mod tests {
     fn ambiguous_profiles_error() {
         let c = cfg("[profiles.a]\nbase_url = \"http://a\"\n[profiles.b]\nbase_url = \"http://b\"");
         assert!(c.resolve(&Overrides::default()).is_err());
+    }
+
+    #[test]
+    fn read_only_profile_overrides_top_level() {
+        let c = cfg(r#"
+            read_only = true
+            [profiles.prod]
+            base_url = "http://prod"
+            [profiles.dev]
+            base_url = "http://dev"
+            read_only = false
+        "#);
+        let pick = |p: &str, force: bool| {
+            c.resolve(&Overrides {
+                profile: Some(p.into()),
+                read_only: force,
+                ..Default::default()
+            })
+            .unwrap()
+            .read_only
+        };
+        assert!(pick("prod", false), "inherits top-level read_only");
+        assert!(!pick("dev", false), "profile can opt out");
+        assert!(pick("dev", true), "--read-only forces it on");
+        assert!(
+            !cfg(SAMPLE)
+                .resolve(&Overrides::default())
+                .unwrap()
+                .read_only,
+            "off by default"
+        );
     }
 
     #[test]
