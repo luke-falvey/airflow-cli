@@ -31,13 +31,79 @@ airflow-cli runs trigger my_dag --conf '{"date": "2026-11-01"}' --wait
 ```
 
 - **Usage guide and worked examples:** [SKILLS.md](SKILLS.md). It has YAML front matter, so it can be dropped into a skills directory as-is.
-- **Configuration:** `~/.airflow.toml` holds named profiles (each with `base_url` plus `username`/`password` or `token`) and top-level default credentials. Pick a profile with `-p NAME` or `AIRFLOW_CLI_PROFILE`. Set `read_only = true`, at the top level or per profile, to refuse anything that changes server state.
+- **Configuration:** profiles in `~/.airflow.toml`, with optional read-only mode; see [Configuration](#configuration).
 - **Command coverage:**
   - DAGs: list, get, details, pause, unpause, delete, source, tasks, reparse, stats, warnings.
   - DAG runs: list, get, trigger, wait, clear, set state, note, delete.
   - Task instances: list, get, logs, tries, clear, set state.
   - XComs, variables (with import/export), connections, pools, import errors, health, version, server config.
   - Everything else in the API through `airflow-cli api METHOD PATH`.
+
+## Configuration
+
+Connection settings live in `~/.airflow.toml`. Each profile is one Airflow webserver. Username,
+password and `read_only` at the top level are the defaults for every profile that doesn't set its own.
+
+```toml
+# ~/.airflow.toml
+
+# Profile used when neither --profile nor AIRFLOW_CLI_PROFILE is given.
+default_profile = "local"
+
+# Defaults for every profile below.
+username = "admin"
+password = "admin"
+read_only = false          # true = refuse anything that changes server state
+
+[profiles.local]
+base_url = "http://localhost:8080"          # /api/v1 is appended automatically
+
+[profiles.staging]
+base_url = "https://airflow.staging.example.com"
+# no credentials here, so it uses the top-level ones
+
+# Production: a read-only profile for everyday use...
+[profiles.prod]
+base_url = "https://airflow.example.com"
+username = "svc-airflow"                    # overrides the top-level username
+password = "change-me"
+read_only = true
+
+# ...and a separate one for deliberate changes.
+[profiles.prod-write]
+base_url = "https://airflow.example.com"
+username = "svc-airflow"
+password = "change-me"
+
+# A deployment behind a token gateway: a bearer token instead of basic auth.
+[profiles.managed]
+base_url = "https://airflow.managed.example.com/airflow"   # sub-paths work too
+token = "eyJ..."
+```
+
+How each setting is chosen (first match wins):
+
+| Setting | Order |
+|---|---|
+| Profile | `--profile`/`-p`, `AIRFLOW_CLI_PROFILE`, `default_profile`, a profile named `default`, the only profile if there's just one |
+| Server URL | `--url`/`AIRFLOW_CLI_URL`, then the profile's `base_url` |
+| Auth | the profile's `token` as a bearer token (unless `--username` is given), otherwise basic auth with `--username`/`--password` (or `AIRFLOW_CLI_USERNAME`/`AIRFLOW_CLI_PASSWORD`), then the profile, then the top level. `--token`/`AIRFLOW_CLI_TOKEN` supply a token. |
+| `read_only` | on if `--read-only` or `AIRFLOW_CLI_READ_ONLY` is set, otherwise the profile's value, then the top level, then off |
+
+Basic auth needs `airflow.api.auth.backend.basic_auth` in the server's `[api] auth_backends`. Read-only
+mode is checked before anything is sent. It allows reads and dry runs, refuses the rest with exit code 5,
+and can only be switched off in this file, never from the command line. Unknown keys are rejected, so a
+typo like `baseurl` is an error rather than silently ignored. Use `--config PATH` or `AIRFLOW_CLI_CONFIG`
+to read a different file.
+
+```bash
+airflow-cli config example        # print a starter file
+airflow-cli config profiles       # list profiles: default, auth type, read_only
+airflow-cli -p prod config show   # the settings a command would use (secrets hidden)
+airflow-cli -p prod ping          # check the server is reachable and the credentials work
+```
+
+The file holds passwords and tokens, so make it readable only by you: `chmod 600 ~/.airflow.toml`.
 
 ## Claude skills
 
