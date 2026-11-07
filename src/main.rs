@@ -42,10 +42,16 @@ username = "svc-airflow"
 password = "change-me"
 read_only = true
 
-# Deployments behind a token-based gateway can use a bearer token instead.
-# [profiles.managed]
-# base_url = "https://airflow.managed.example.com"
-# token = "eyJ..."
+# Astro, or a token-based gateway: a bearer token instead of username/password.
+# [profiles.astro]
+# base_url = "https://<deployment-url>"
+# token = "<deployment API token>"
+
+# Astronomer Software (on-premise): service account keys go in the header as-is.
+# [profiles.software]
+# base_url = "https://deployments.<base-domain>/<release-name>/airflow"
+# token = "<service account API key>"
+# token_prefix = ""
 "#;
 
 fn main() {
@@ -79,6 +85,7 @@ fn run(cli: Cli) -> Result<i32> {
         username: cli.username.clone(),
         password: cli.password.clone(),
         token: cli.token.clone(),
+        token_prefix: cli.token_prefix.clone(),
         read_only: cli.read_only,
     };
 
@@ -109,7 +116,11 @@ fn run(cli: Cli) -> Result<i32> {
                 let (auth, username) = match &r.auth {
                     Auth::None => ("none", None),
                     Auth::Basic { username, .. } => ("basic", Some(username.clone())),
-                    Auth::Bearer(_) => ("token", None),
+                    Auth::Token { .. } => ("token", None),
+                };
+                let token_prefix = match &r.auth {
+                    Auth::Token { prefix, .. } => Some(prefix.clone()),
+                    _ => None,
                 };
                 out.json(&json!({
                     "config_file": config_path.display().to_string(),
@@ -119,6 +130,7 @@ fn run(cli: Cli) -> Result<i32> {
                     "auth": auth,
                     "username": username,
                     "read_only": r.read_only,
+                    "token_prefix": token_prefix,
                 }));
             }
         }

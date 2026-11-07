@@ -595,3 +595,59 @@ fn variable_update_omits_null_description() {
         .success();
     patch.assert();
 }
+
+#[test]
+fn astronomer_software_sends_raw_key_under_release_path() {
+    let mut server = Server::new();
+    // Astronomer Software: https://deployments.<base>/<release>/airflow/api/v1, raw key, no "Bearer".
+    let m = server
+        .mock("GET", "/galactic-stars-1234/airflow/api/v1/dags")
+        .match_header("authorization", "sa-key-123")
+        .match_query(Matcher::Any)
+        .with_body(r#"{"dags":[],"total_entries":0}"#)
+        .create();
+    let env = Env::new(&format!(
+        "[profiles.software]\nbase_url = \"{}/galactic-stars-1234/airflow\"\ntoken = \"sa-key-123\"\ntoken_prefix = \"\"\n",
+        server.url()
+    ));
+    env.cmd().args(["dags", "list"]).assert().success();
+    env.cmd()
+        .args(["config", "show", "--compact"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""token_prefix":"""#))
+        .stdout(predicate::str::contains("sa-key-123").not());
+    m.assert();
+}
+
+#[test]
+fn token_and_prefix_from_environment() {
+    let mut server = Server::new();
+    let m = server
+        .mock("GET", "/api/v1/version")
+        .match_header("authorization", "Token from-env")
+        .with_body(r#"{"version":"2.11.0"}"#)
+        .create();
+    let env = Env::new(&format!("[profiles.x]\nbase_url = \"{}\"\n", server.url()));
+    env.cmd()
+        .env("AIRFLOW_CLI_TOKEN", "from-env")
+        .env("AIRFLOW_CLI_TOKEN_PREFIX", "Token")
+        .arg("version")
+        .assert()
+        .success();
+    m.assert();
+}
+
+#[test]
+fn invalid_token_prefix_is_rejected() {
+    let env = Env::new(
+        "[profiles.x]\nbase_url = \"http://127.0.0.1:1\"\ntoken = \"k\"\ntoken_prefix = \"Bearer x\"\n",
+    );
+    env.cmd()
+        .arg("version")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "token_prefix must be a single word",
+        ));
+}

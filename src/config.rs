@@ -25,6 +25,11 @@ use serde::{Deserialize, Serialize};
 /// base_url = "https://managed.example.com"
 /// token = "eyJ..."           # bearer token instead of username/password
 /// read_only = true           # refuse anything that changes server state
+///
+/// [profiles.software]          # Astronomer Software (on-premise)
+/// base_url = "https://deployments.example.com/my-release-1234/airflow"
+/// token = "service-account-key"
+/// token_prefix = ""          # send `Authorization: <key>` with no "Bearer"
 /// ```
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -44,8 +49,11 @@ pub struct Profile {
     pub base_url: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
-    /// Bearer token. When set, it is sent instead of username/password.
+    /// API token. When set, it is sent instead of username/password.
     pub token: Option<String>,
+    /// Word sent before the token in the Authorization header. Default "Bearer";
+    /// "" sends the token on its own (Astronomer Software service account keys).
+    pub token_prefix: Option<String>,
     /// Refuse requests that change server state. Overrides the top-level value.
     pub read_only: Option<bool>,
 }
@@ -58,6 +66,7 @@ pub struct Overrides {
     pub username: Option<String>,
     pub password: Option<String>,
     pub token: Option<String>,
+    pub token_prefix: Option<String>,
     /// `--read-only`: forces read-only on. There is deliberately no flag to
     /// turn it off; that has to be done in the config file.
     pub read_only: bool,
@@ -66,8 +75,15 @@ pub struct Overrides {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Auth {
     None,
-    Basic { username: String, password: String },
-    Bearer(String),
+    Basic {
+        username: String,
+        password: String,
+    },
+    /// `Authorization: <prefix> <token>`, or just `<token>` when the prefix is empty.
+    Token {
+        token: String,
+        prefix: String,
+    },
 }
 
 /// The final connection settings.
@@ -162,14 +178,27 @@ impl FileConfig {
             .or_else(|| profile.and_then(|p| p.password.clone()))
             .or_else(|| self.password.clone());
 
+        let prefix = ov
+            .token_prefix
+            .clone()
+            .or_else(|| profile.and_then(|p| p.token_prefix.clone()))
+            .unwrap_or_else(|| "Bearer".to_string());
+        if prefix.chars().any(char::is_whitespace) {
+            bail!("token_prefix must be a single word (or empty), got {prefix:?}");
+        }
+        let token_auth = |token: String| Auth::Token {
+            token,
+            prefix: prefix.clone(),
+        };
+
         // An explicit --username beats a profile token; otherwise a token wins.
         let auth = match (token, username) {
-            (Some(t), _) if ov.username.is_none() => Auth::Bearer(t),
+            (Some(t), _) if ov.username.is_none() => token_auth(t),
             (_, Some(u)) => Auth::Basic {
                 username: u,
                 password: password.unwrap_or_default(),
             },
-            (Some(t), None) => Auth::Bearer(t),
+            (Some(t), None) => token_auth(t),
             (None, None) => Auth::None,
         };
 
@@ -260,7 +289,10 @@ mod tests {
         };
         assert_eq!(
             cfg(SAMPLE).resolve(&ov).unwrap().auth,
-            Auth::Bearer("tok".into())
+            Auth::Token {
+                token: "tok".into(),
+                prefix: "Bearer".into()
+            }
         );
         let ov = Overrides {
             profile: Some("managed".into()),
@@ -268,6 +300,41 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cfg(SAMPLE).resolve(&ov).unwrap().auth, basic("me", "toppw"));
+    }
+
+    #[test]
+    fn token_prefix_can_be_empty_or_custom() {
+        let c = cfg(r#"
+            [profiles.software]
+            base_url = "https://deployments.example.com/r-1/airflow"
+            token = "key"
+            token_prefix = ""
+        "#);
+        let auth = |ov: Overrides| c.resolve(&ov).unwrap().auth;
+        assert_eq!(
+            auth(Overrides::default()),
+            Auth::Token {
+                token: "key".into(),
+                prefix: "".into()
+            }
+        );
+        assert_eq!(
+            auth(Overrides {
+                token_prefix: Some("Token".into()),
+                ..Default::default()
+            }),
+            Auth::Token {
+                token: "key".into(),
+                prefix: "Token".into()
+            }
+        );
+        assert!(
+            c.resolve(&Overrides {
+                token_prefix: Some("Two words".into()),
+                ..Default::default()
+            })
+            .is_err()
+        );
     }
 
     #[test]

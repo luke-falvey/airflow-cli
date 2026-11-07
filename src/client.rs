@@ -143,7 +143,21 @@ impl Client {
         match &self.auth {
             Auth::None => req,
             Auth::Basic { username, password } => req.basic_auth(username, Some(password)),
-            Auth::Bearer(t) => req.bearer_auth(t),
+            Auth::Token { token, prefix } => {
+                let value = if prefix.is_empty() {
+                    token.clone()
+                } else {
+                    format!("{prefix} {token}")
+                };
+                match reqwest::header::HeaderValue::from_str(&value) {
+                    Ok(mut v) => {
+                        v.set_sensitive(true);
+                        req.header(reqwest::header::AUTHORIZATION, v)
+                    }
+                    // Invalid header characters: let reqwest report it when sending.
+                    Err(_) => req.header(reqwest::header::AUTHORIZATION, value),
+                }
+            }
         }
     }
 

@@ -42,9 +42,19 @@ pub struct Cli {
     )]
     pub password: Option<String>,
 
-    /// Bearer token, overriding the config file.
+    /// API token, overriding the config file (sent as `Bearer <token>` unless --token-prefix says otherwise).
     #[arg(long, global = true, env = "AIRFLOW_CLI_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
+
+    /// Word before the token in the Authorization header (default Bearer; "" for none,
+    /// as Astronomer Software service account keys need).
+    #[arg(
+        long,
+        global = true,
+        env = "AIRFLOW_CLI_TOKEN_PREFIX",
+        value_name = "WORD"
+    )]
+    pub token_prefix: Option<String>,
 
     /// Refuse requests that change server state, whatever the config says.
     #[arg(long, global = true, env = "AIRFLOW_CLI_READ_ONLY")]

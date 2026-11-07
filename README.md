@@ -75,10 +75,16 @@ base_url = "https://airflow.example.com"
 username = "svc-airflow"
 password = "change-me"
 
-# A deployment behind a token gateway: a bearer token instead of basic auth.
-[profiles.managed]
-base_url = "https://airflow.managed.example.com/airflow"   # sub-paths work too
-token = "eyJ..."
+# Astro, or any token gateway: a bearer token instead of basic auth.
+[profiles.astro]
+base_url = "https://<deployment-url>"        # the Deployment URL shown in Astro
+token = "<deployment API token>"
+
+# Astronomer Software (on-premise): the service account key goes in the header as-is.
+[profiles.software]
+base_url = "https://deployments.mycompany.example.com/galactic-stars-1234/airflow"   # sub-paths work
+token = "<service account API key>"
+token_prefix = ""                           # Authorization: <key>   (no "Bearer")
 ```
 
 How each setting is chosen (first match wins):
@@ -87,7 +93,8 @@ How each setting is chosen (first match wins):
 |---|---|
 | Profile | `--profile`/`-p`, `AIRFLOW_CLI_PROFILE`, `default_profile`, a profile named `default`, the only profile if there's just one |
 | Server URL | `--url`/`AIRFLOW_CLI_URL`, then the profile's `base_url` |
-| Auth | the profile's `token` as a bearer token (unless `--username` is given), otherwise basic auth with `--username`/`--password` (or `AIRFLOW_CLI_USERNAME`/`AIRFLOW_CLI_PASSWORD`), then the profile, then the top level. `--token`/`AIRFLOW_CLI_TOKEN` supply a token. |
+| Auth | the profile's `token` (unless `--username` is given), otherwise basic auth with `--username`/`--password` (or `AIRFLOW_CLI_USERNAME`/`AIRFLOW_CLI_PASSWORD`), then the profile, then the top level. `--token`/`AIRFLOW_CLI_TOKEN` supply a token. |
+| Token header | `Authorization: <token_prefix> <token>`. The prefix comes from `--token-prefix`/`AIRFLOW_CLI_TOKEN_PREFIX`, then the profile's `token_prefix`, default `Bearer`; `""` sends the token alone. |
 | `read_only` | on if `--read-only` or `AIRFLOW_CLI_READ_ONLY` is set, otherwise the profile's value, then the top level, then off |
 
 Basic auth needs `airflow.api.auth.backend.basic_auth` in the server's `[api] auth_backends`. Read-only
@@ -104,6 +111,24 @@ airflow-cli -p prod ping          # check the server is reachable and the creden
 ```
 
 The file holds passwords and tokens, so make it readable only by you: `chmod 600 ~/.airflow.toml`.
+
+### Astronomer
+
+| Platform | `base_url` | Credentials |
+|---|---|---|
+| **Astro** (hosted), Airflow 2 deployments | the Deployment URL from the Astro UI | a Deployment or Workspace API token: `token = "..."` (sent as `Bearer`) |
+| **Astronomer Software** (on-premise) | `https://deployments.<base-domain>/<release-name>/airflow` | a Deployment service account API key: `token = "..."` plus `token_prefix = ""` |
+
+The CLI adds `/api/v1` to `base_url`, so give the URL up to `.../airflow` for Software, not the `api/v1` part.
+For a quick session on Astro without saving a token, borrow the Astro CLI's login token, which expires:
+
+```bash
+AIRFLOW_CLI_TOKEN=$(astro auth token) airflow-cli -p astro ping
+```
+
+Not supported:
+- Airflow 3 deployments, which serve `/api/v2`. This CLI speaks Airflow 2's `/api/v1`.
+- Logging in through a browser like `astro login` does. Use an API token or service account key instead.
 
 ## Claude skills
 

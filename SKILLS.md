@@ -47,9 +47,14 @@ username = "svc-airflow"         # overrides the top-level username/password
 password = "change-me"
 read_only = true                 # look but don't touch: overrides the top-level read_only
 
-[profiles.managed]
-base_url = "https://airflow.managed.example.com"
-token = "eyJ..."                 # bearer token instead of username/password
+[profiles.astro]
+base_url = "https://<deployment-url>"   # Astro: the Deployment URL
+token = "<deployment API token>"        # sent as "Authorization: Bearer <token>"
+
+[profiles.software]
+base_url = "https://deployments.<base-domain>/<release-name>/airflow"   # Astronomer Software
+token = "<service account API key>"
+token_prefix = ""                       # sent as "Authorization: <key>", no "Bearer"
 ```
 
 How the settings are chosen:
@@ -85,7 +90,9 @@ error: profile 'prod' is read-only: refusing POST /api/v1/dags/etl/dagRuns becau
 This is a client-side guard against mistakes. For real access control, give the profile an Airflow
 user with the `Viewer` role as well.
 
-A profile with a `token` sends `Authorization: Bearer ...`. Otherwise the CLI uses HTTP basic auth,
+A profile with a `token` sends `Authorization: Bearer <token>`. Change the word with `token_prefix`, or
+with `--token-prefix`/`AIRFLOW_CLI_TOKEN_PREFIX`. `token_prefix = ""` sends the token alone, which is
+what Astronomer Software service account keys need. Otherwise the CLI uses HTTP basic auth,
 which needs `airflow.api.auth.backend.basic_auth` in the server's `[api] auth_backends`.
 
 Check the setup:
@@ -348,6 +355,7 @@ airflow-cli runs list cli_demo --all --compact | jq -r '.dag_runs[] | select(.da
 | Symptom | Cause / fix |
 |---|---|
 | `HTTP 401 Unauthorized` | Wrong credentials, or the server doesn't accept basic auth. Add `airflow.api.auth.backend.basic_auth` to `[api] auth_backends`, or use a `token` profile. |
+| `HTTP 401`/`403` on Astronomer Software with a valid key | Software expects the key without `Bearer`. Set `token_prefix = ""` on the profile. |
 | `HTTP 403 Forbidden` | The user's role lacks that permission. For example, `Viewer` can't change variables. |
 | `... is read-only: refusing ...` (exit 5) | The profile has `read_only = true`, or `--read-only`/`AIRFLOW_CLI_READ_ONLY` is set. Switch profile, or change `read_only` in `~/.airflow.toml`. |
 | Run stays `queued` | The DAG is paused (`trigger` warns about this; use `--unpause`), or the scheduler is down (check `airflow-cli health`). |
